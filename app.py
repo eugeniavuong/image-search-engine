@@ -1,4 +1,5 @@
 import csv
+import streamlit as st
 from glob import glob
 from pathlib import Path
 from PIL import Image
@@ -26,35 +27,20 @@ connections.connect(host=HOST, port=PORT)
 # Function to create Milvus collection
 def create_milvus_collection(collection_name, dim):
     if utility.has_collection(collection_name):
-        utility.drop_collection(collection_name)
+        collection = Collection(collection_name)
+    else:
     
-    fields = [
-        FieldSchema(name="path", dtype=DataType.VARCHAR, description="path to image", max_length=500, is_primary=True, auto_id=False),
-        FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, description="image embedding vectors", dim=dim)
-    ]
-    schema = CollectionSchema(fields, description="reverse image search")
-    collection = Collection(name=collection_name, schema=schema)
+        fields = [
+            FieldSchema(name="path", dtype=DataType.VARCHAR, description="path to image", max_length=500, is_primary=True, auto_id=False),
+            FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, description="image embedding vectors", dim=dim)
+        ]
+        schema = CollectionSchema(fields, description="reverse image search")
+        collection = Collection(name=collection_name, schema=schema)
 
-    index_params = {'metric_type': METRIC_TYPE, 'index_type': INDEX_TYPE, 'params': {"nlist": 2048}}
-    collection.create_index(field_name='embedding', index_params=index_params)
+        index_params = {'metric_type': METRIC_TYPE, 'index_type': INDEX_TYPE, 'params': {"nlist": 2048}}
+        collection.create_index(field_name='embedding', index_params=index_params)
 
     return collection
-
-# Create the Milvus collection
-collection = create_milvus_collection(COLLECTION_NAME, DIM)
-
-# PyTorch model for embedding extraction
-model = models.resnet50(weights=ResNet50_Weights.IMAGENET1K_V1)
-model = torch.nn.Sequential(*(list(model.children())[:-1]))  # remove last (classification layer)
-model.eval()
-
-# Image preprocessing
-preprocess = transforms.Compose([
-    transforms.Resize(256),
-    transforms.CenterCrop(224),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]), # normalise images using the mean and st of RGB colour channels
-])
 
 # Load images from file or csv
 def load_image_paths(file):
@@ -70,6 +56,19 @@ def load_image_paths(file):
 
 # Function to extract embeddings
 def extract_embedding(image_path):
+    # PyTorch model for embedding extraction
+    model = models.resnet50(weights=ResNet50_Weights.IMAGENET1K_V1)
+    model = torch.nn.Sequential(*(list(model.children())[:-1]))  # remove last (classification layer)
+    model.eval()
+
+    # Image preprocessing
+    preprocess = transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]), # normalise images using the mean and st of RGB colour channels
+    ])
+
     img = Image.open(image_path).convert('RGB')
     img_tensor = preprocess(img).unsqueeze(0)  # Add batch dimension
     with torch.no_grad():
@@ -92,12 +91,6 @@ def insert_into_milvus(collection, image_paths):
 
     print(f'Inserted {len(paths)} images into the collection.')
 
-# Load image paths and manually insert into Milvus
-image_paths = list(load_image_paths(INSERT_SRC))
-insert_into_milvus(collection, image_paths)
-
-# Check number of entities in the collection
-print('Number of entities in the collection:', collection.num_entities)
 
 def search_similar_images(collection, image_path, top_k=5):
     # Extract the embedding of the query image 
@@ -113,7 +106,7 @@ def search_similar_images(collection, image_path, top_k=5):
 
     # Search in Milvus for the top_k 
     try:
-        search_params = {"metric_type" : "L2", "params":{"nprobe": 10}} # L2 - euclidean distance, nprobe is number of units to query during search
+        search_params = {"metric_type" : METRIC_TYPE, "params":{"nprobe": 100}} # L2 - euclidean distance, nprobe is number of units to query during search
         search_result = collection.search(
             data=[query_embedding], # Input embedding to search
             anns_field="embedding",
@@ -154,19 +147,33 @@ def load_collection(collection):
         raise Exception(f"Collection {collection.name} does not exist.")
     
     # Load the collection into memory 
-    collection.load()
+    if not collection.is_loaded:
+        collection.load()
     print(f"Collection '{collection.name}' loaded into memory")
 
+def mainF(image_path):
+    # Create the Milvus collection
+    collection = create_milvus_collection(COLLECTION_NAME, DIM)
 
-collection = Collection(COLLECTION_NAME)
+    # Load image paths and manually insert into Milvus
+    image_paths = list(load_image_paths(INSERT_SRC))
+    insert_into_milvus(collection, image_paths)
 
-load_collection(collection)
+    # Check number of entities in the collection
+    print('Number of entities in the collection:', collection.num_entities)
 
-image_path = './test/goldfish/n01443537_3883.JPEG'
+    collection = Collection(COLLECTION_NAME)
 
-# Get the top 5 similar images
-similar_images = search_similar_images(collection, image_path, top_k=5)
+    load_collection(collection)
 
-print("Top 5 similar images:")
-for img_path in similar_images:
-    print(img_path)
+    #image_path = './test/goldfish/n01443537_3883.JPEG'
+
+    # Get the top 5 similar images
+    similar_images = search_similar_images(collection, image_path, top_k=5)
+
+    print("Top 5 similar images:")
+    for img_path in similar_images:
+        print(img_path)
+
+    return similar_images # returns the pathers of the top
+
