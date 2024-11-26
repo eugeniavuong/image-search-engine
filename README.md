@@ -36,6 +36,9 @@ This project uses milvus 2.2.10 and pymilvus 2.2.11.
 ### Performance Improvements 
 - To improve search performance of the collection, I should work on optimising the parameters affecting the way i'm loading the collaction (e.g. replica, index type)
 
+<img width="557" alt="image" src="https://github.com/user-attachments/assets/43fa7576-ac53-450a-aacd-9a0568d771c9">
+
+
 
 
 
